@@ -46,10 +46,8 @@ import cog
 from dataset_and_utils import TokenEmbeddingsHandler
 
 SDXL_MODEL_CACHE = "./sdxl-cache"
-REFINER_MODEL_CACHE = "./refiner-cache"
 CONTROLNET_CACHE = "./controlnet_cache"
 SAFETY_CACHE = "./safety-cache"
-FEATURE_EXTRACTOR = "./feature-extractor"
 SDXL_URL = "https://weights.replicate.delivery/default/sdxl/sdxl-vae-fix-1.0.tar"
 REFINER_URL = (
     "https://weights.replicate.delivery/default/sdxl/refiner-no-vae-no-encoder-1.0.tar"
@@ -70,7 +68,7 @@ SCHEDULERS = {
     "K_EULER_ANCESTRAL": EulerAncestralDiscreteScheduler,
     "K_EULER": EulerDiscreteScheduler,
     "PNDM": PNDMScheduler,
-    "UNIPC":UniPCMultistepScheduler,
+    "UNIPC": UniPCMultistepScheduler,
 }
 
 
@@ -84,9 +82,8 @@ def download_weights(url, dest):
 
 class Predictor(BasePredictor):
     def load_trained_weights(self, weights_url, pipe, use_default=True):
-
         if use_default:
-            self.is_lora  = True
+            self.is_lora = True
             lora_default_path = "./lora/default_lora.safetensors"
             print("Loading Unet with default LoRA")
 
@@ -130,14 +127,12 @@ class Predictor(BasePredictor):
 
             unet.set_attn_processor(unet_lora_attn_procs)
             unet.load_state_dict(tensors, strict=False)
-            return 
+            return
 
-                
-           
         # Get the TAR archive content
         weights_tar_data = requests.get(weights_url).content
 
-        with tarfile.open(fileobj=BytesIO(weights_tar_data), mode='r') as tar_ref:
+        with tarfile.open(fileobj=BytesIO(weights_tar_data), mode="r") as tar_ref:
             tar_ref.extractall("trained-model")
 
         local_weights_cache = "./trained-model"
@@ -212,13 +207,14 @@ class Predictor(BasePredictor):
         if os.path.exists(os.path.join(local_weights_cache, "embeddings.pti")):
             handler.load_embeddings(os.path.join(local_weights_cache, "embeddings.pti"))
 
-            with open(os.path.join(local_weights_cache, "special_params.json"), "r") as f:
+            with open(
+                os.path.join(local_weights_cache, "special_params.json"), "r"
+            ) as f:
                 params = json.load(f)
             self.token_map = params
 
-            self.tuned_model = True            
-            
-                        
+            self.tuned_model = True
+
     def setup(self, weights: Optional[Path] = None):
         """Load the model into memory to make running multiple predictions efficient"""
         start = time.time()
@@ -227,22 +223,10 @@ class Predictor(BasePredictor):
         print("Loading safety checker...")
         if not os.path.exists(SAFETY_CACHE):
             download_weights(SAFETY_URL, SAFETY_CACHE)
-        self.safety_checker = StableDiffusionSafetyChecker.from_pretrained(
-            SAFETY_CACHE, torch_dtype=torch.float16
-        ).to("cuda")
-        self.feature_extractor = CLIPImageProcessor.from_pretrained(FEATURE_EXTRACTOR)
 
         if not os.path.exists(SDXL_MODEL_CACHE):
             download_weights(SDXL_URL, SDXL_MODEL_CACHE)
-        if not os.path.exists(REFINER_MODEL_CACHE):
-            download_weights(REFINER_URL, REFINER_MODEL_CACHE)
 
-        self.txt2img_pipe = DiffusionPipeline.from_pretrained(
-                SDXL_MODEL_CACHE,
-                torch_dtype=torch.float16,
-                use_safetensors=True,
-                variant="fp16",
-            )
         controlnet = ControlNetModel.from_pretrained(
             CONTROLNET_CACHE,
             torch_dtype=torch.float16,
@@ -261,7 +245,6 @@ class Predictor(BasePredictor):
         self.txt2img_pipe.to("cuda")
         self.txt2img_pipe.enable_xformers_memory_efficient_attention()
         self.is_lora = True
-        
 
         print("setup took: ", time.time() - start)
         # self.txt2img_pipe.__class__.encode_prompt = new_encode_prompt
@@ -269,34 +252,23 @@ class Predictor(BasePredictor):
     def load_image(self, path):
         # Copy the image to a temporary location
         shutil.copyfile(path, "/tmp/image.png")
-        
+
         # Open the copied image
         img = Image.open("/tmp/image.png")
-        
+
         # Calculate the new dimensions while maintaining aspect ratio
         width, height = img.size
         new_width = math.ceil(width / 64) * 64
         new_height = math.ceil(height / 64) * 64
-        
+
         # Resize the image if needed
         if new_width != width or new_height != height:
             img = img.resize((new_width, new_height))
-        
+
         # Convert the image to RGB mode
         img = img.convert("RGB")
-        
-        return img
 
-    def run_safety_checker(self, image):
-        safety_checker_input = self.feature_extractor(image, return_tensors="pt").to(
-            "cuda"
-        )
-        np_image = [np.array(val) for val in image]
-        image, has_nsfw_concept = self.safety_checker(
-            images=np_image,
-            clip_input=safety_checker_input.pixel_values.to(torch.float16),
-        )
-        return image, has_nsfw_concept
+        return img
 
     @torch.inference_mode()
     def predict(
@@ -383,86 +355,82 @@ class Predictor(BasePredictor):
         seed: int = Input(
             description="Random seed. Leave blank to randomize the seed", default=None
         ),
-        controlnet_conditioning_scale : float = Input(
+        controlnet_conditioning_scale: float = Input(
             description="ControlNet conditioning scale. Only applicable on trained models.",
             ge=0.0,
             le=1.0,
             default=0.6,
         ),
     ) -> List[Path]:
-            
-            
         """Run a single prediction on the model"""
-        
+
         print(f"Using seed: {seed}")
 
         sdxl_kwargs = {}
         self.tuned_model = False
-        images_list=[]
-        for image in [image1,image2,image3,image4]:
+        images_list = []
+        for image in [image1, image2, image3, image4]:
             if image:
                 images_list.append(image)
-        images_input=[]
-        height_list=[height1,height2,height3,height4]
-        width_list=[width1,width2,width3,width4]
-        for idx,image in enumerate(images_list):
-                #if condition to check if it is pil image or not
-                print(image)
-                print(type(image))
-                if isinstance(image, str) or isinstance(image, cog.types.Path):
-                    
-                    height=height_list[idx]
-                    width=width_list[idx]
-                    image_ = self.load_image(image)
-                    image_ = np.array(image_.resize((width, height)))
-                    LOW_THRES = 100
-                    HIGH_THRES = 200
-                    image_ = cv2.Canny(image_, LOW_THRES, HIGH_THRES)
-                    image_ = image_[:, :, None]
-                    image_ = np.concatenate([image_, image_, image_], axis=2)
-                    image_ = Image.fromarray(image_)
-                    images_input.append(image_)
-        
+        images_input = []
+        height_list = [height1, height2, height3, height4]
+        width_list = [width1, width2, width3, width4]
+        for idx, image in enumerate(images_list):
+            # if condition to check if it is pil image or not
+            print(image)
+            print(type(image))
+            if isinstance(image, str) or isinstance(image, cog.types.Path):
+                height = height_list[idx]
+                width = width_list[idx]
+                image_ = self.load_image(image)
+                image_ = np.array(image_.resize((width, height)))
+                LOW_THRES = 100
+                HIGH_THRES = 200
+                image_ = cv2.Canny(image_, LOW_THRES, HIGH_THRES)
+                image_ = image_[:, :, None]
+                image_ = np.concatenate([image_, image_, image_], axis=2)
+                image_ = Image.fromarray(image_)
+                images_input.append(image_)
+
         # if len(images_input) == 1:
         #     images_input = images_input[0]
         sdxl_kwargs["image"] = images_input
         prompt_list = []
-        generators=[]
-        for prompt in [prompt1,prompt2,prompt3,prompt4]:
+        generators = []
+        for prompt in [prompt1, prompt2, prompt3, prompt4]:
             if prompt:
                 prompt_list.append(prompt)
-        if len(images_input)>len(prompt_list):
-            images_input=images_input[:len(prompt_list)]
-        if len(images_input)<len(prompt_list):
-            #duplicate the images
-            images_input=images_input*(len(prompt_list)//len(images_input))
-            images_input=images_input+images_input[:len(prompt_list)%len(images_input)]
-        
+        if len(images_input) > len(prompt_list):
+            images_input = images_input[: len(prompt_list)]
+        if len(images_input) < len(prompt_list):
+            # duplicate the images
+            images_input = images_input * (len(prompt_list) // len(images_input))
+            images_input = (
+                images_input + images_input[: len(prompt_list) % len(images_input)]
+            )
+
         negative_prompt_list = [negative_prompt] * len(prompt_list)
-        
+
         # negative_prompt_list = [negative_prompt] * len(prompt_list)
-        
+
         if seed is None:
-            seed = [random.randint(0,9999999999) for _ in prompt_list]
+            seed = [random.randint(0, 9999999999) for _ in prompt_list]
             for s in seed:
                 generators.append(torch.Generator("cuda").manual_seed(s))
         else:
-            seed = [seed]*len(prompt_list)
+            seed = [seed] * len(prompt_list)
             for s in seed:
                 generators.append(torch.Generator("cuda").manual_seed(s))
-        
-        
-        
+
         pipe = self.txt2img_pipe
         pipe.scheduler = SCHEDULERS[scheduler].from_config(pipe.scheduler.config)
-        output_images=[]
+        output_images = []
         for idx, prompt in enumerate(prompt_list):
             sdxl_kwargs["image"] = images_input[idx]
             sdxl_kwargs["width"] = width_list[idx]
             sdxl_kwargs["height"] = height_list[idx]
             sdxl_kwargs["controlnet_conditioning_scale"] = controlnet_conditioning_scale
 
-            
             common_args = {
                 "prompt": prompt,
                 "negative_prompt": negative_prompt_list[idx],
