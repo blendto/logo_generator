@@ -1,0 +1,41 @@
+version: 0.2
+
+env:
+  git-credential-helper: yes
+  shell: bash
+  variables:
+    BASH_ENV: "$CODEBUILD_SRC_DIR/codebuild-helper.bash"
+
+phases:
+  install:
+    commands:
+      - cd /tmp/
+      - curl -OJL https://github.com/git-lfs/git-lfs/releases/download/v2.13.3/git-lfs-linux-amd64-v2.13.3.tar.gz
+      - tar xzf git-lfs-linux-amd64-v2.13.3.tar.gz
+      - ./install.sh
+  pre_build:
+    commands:
+      - cd /tmp/
+      - sudo curl -o /usr/local/bin/cog -L "https://github.com/replicate/cog/releases/latest/download/cog_$(uname -s)_$(uname -m)"
+      - sudo chmod +x /usr/local/bin/cog
+      - cd $CODEBUILD_SRC_DIR
+      - git remote add github https://github.com/blendto/logo_generator.git
+      - git lfs pull github
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker image...
+      - cog run scripts/download_scripts
+      - cog build -t $IMAGE_REPO_NAME:latest
+      - docker tag $IMAGE_REPO_NAME:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$CODEBUILD_RESOLVED_SOURCE_VERSION
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker image...
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$CODEBUILD_RESOLVED_SOURCE_VERSION
+      - echo Writing image definitions file...
+      - printf '[{"name":"web-app","imageUri":"%s"}]' $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$CODEBUILD_RESOLVED_SOURCE_VERSION  > imagedefinitions.json
+artifacts:
+  files: imagedefinitions.json
